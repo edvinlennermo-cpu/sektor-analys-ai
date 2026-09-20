@@ -8,9 +8,15 @@ st.set_page_config(page_title="Sektor- & Marknadsanalys AI", layout="wide")
 
 st.title("📊 Sektor- & Marknadsanalys AI")
 
-# --- SIDEBAR ---
+# --- SIDEBAR & API-HANTERING ---
 st.sidebar.header("Inställningar")
-api_key = st.sidebar.text_input("Google Gemini API-nyckel", type="password", help="Klistra in din API-nyckel från Google AI Studio")
+
+# Hämtar automatiskt från Streamlit Cloud Secrets om det finns, annars visas ruta
+if "GEMINI_API_KEY" in st.secrets:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    st.sidebar.success("🔑 API-nyckel laddad automatiskt!")
+else:
+    api_key = st.sidebar.text_input("Google Gemini API-nyckel", type="password", help="Klistra in din API-nyckel från Google AI Studio")
 
 if st.sidebar.button("Uppdatera marknadsdata"):
     st.cache_data.clear()
@@ -160,7 +166,7 @@ st.markdown("---")
 st.header("🤖 AI-marknadsanalys")
 
 if st.button("Generera AI-analys", type="primary"):
-    if not api_key.strip():
+    if not api_key or not api_key.strip():
         st.error("Mata in din Gemini API-nyckel i sidomenyn till vänster.")
     else:
         with st.spinner("AI-analytikern sammanställer rapporten..."):
