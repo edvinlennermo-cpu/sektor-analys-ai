@@ -11,7 +11,6 @@ st.title("📊 Sektor- & Marknadsanalys AI")
 # --- SIDEBAR & API-HANTERING ---
 st.sidebar.header("Inställningar")
 
-# Hämtar automatiskt från Streamlit Cloud Secrets om det finns, annars visas ruta
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
     st.sidebar.success("🔑 API-nyckel laddad automatiskt!")
@@ -25,12 +24,17 @@ if st.sidebar.button("Uppdatera marknadsdata"):
 st.sidebar.markdown("---")
 st.sidebar.caption("Prisdata cacheas 1 timme.")
 
-# --- BERÄKNINGS- OCH SIGNALFUNKTIONER ---
-def compute_rsi(series, period=14):
+# --- WILDER'S RSI & SIGNALFUNKTIONER ---
+def compute_rsi_wilders(series, period=14):
+    """RSI beräknad med Wilder's Smoothing (Exakt samma som TradingView)"""
     delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    
+    avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    
+    rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
 def get_signal(rsi, dist_sma200, ret_1m):
@@ -44,6 +48,30 @@ def get_signal(rsi, dist_sma200, ret_1m):
         return "🟢 KÖPLÄGE"
     return "⚪ Neutral"
 
+# --- HÄMTA MAKRO- OCH RÅVARUDATA ---
+@st.cache_data(ttl=3600)
+def fetch_macro_data():
+    macro_tickers = {
+        "USD/SEK": "USDSEK=X",
+        "Olja (Brent)": "BZ=F",
+        "Guld": "GC=F",
+        "US 10Y Ränta": "^TNX"
+    }
+    df_macro = yf.download(list(macro_tickers.values()), period="5d", interval="1d")["Close"]
+    results = {}
+    for name, ticker in macro_tickers.items():
+        if ticker in df_macro.columns:
+            series = df_macro[ticker].dropna()
+            if len(series) >= 2:
+                last_val = series.iloc[-1]
+                prev_val = series.iloc[-2]
+                change_pct = ((last_val - prev_val) / prev_val) * 100
+                results[name] = f"{round(last_val, 2)} ({'+' if change_pct>0 else ''}{round(change_pct, 2)}%)"
+            else:
+                results[name] = "N/A"
+    return results
+
+# --- HÄMTA PRISDATA & SIGNALER ---
 @st.cache_data(ttl=3600)
 def fetch_market_data(tickers, benchmark_ticker):
     all_tickers = list(set(tickers + [benchmark_ticker]))
@@ -65,7 +93,8 @@ def fetch_market_data(tickers, benchmark_ticker):
         sma200 = series.rolling(200).mean().iloc[-1]
         dist_sma200 = ((last_price - sma200) / sma200) * 100
 
-        rsi_series = compute_rsi(series)
+        # Använder Wilder's RSI (TradingView)
+        rsi_series = compute_rsi_wilders(series)
         last_rsi = rsi_series.iloc[-1]
 
         ret_1m = ((last_price / series.iloc[-21]) - 1) * 100 if len(series) >= 21 else np.nan
@@ -103,6 +132,13 @@ def fetch_fundamentals(tickers):
         except:
             fund_data[t] = {"Trailing P/E": "N/A", "Forward P/E": "N/A", "Vinstmarginal (%)": "N/A"}
     return fund_data
+
+# --- MAKROBAR LÄNGST UPP ---
+macro_info = fetch_macro_data()
+if macro_info:
+    m_cols = st.columns(len(macro_info))
+    for idx, (k, v) in enumerate(macro_info.items()):
+        m_cols[idx].metric(label=k, value=v)
 
 # --- FLIKAR ---
 tab1, tab2 = st.tabs(["🇺🇸 US Sektorer (SPY)", "🇸🇪 Svenska Aktier (^OMX)"])
@@ -151,7 +187,6 @@ with tab2:
         
         df_se["Sektor"] = df_se["Ticker"].map(ticker_to_sector)
         
-        # Hämta fundamentala nyckeltal
         funds = fetch_fundamentals(all_se_tickers)
         df_se["Trailing P/E"] = df_se["Ticker"].apply(lambda t: funds.get(t, {}).get("Trailing P/E", "N/A"))
         df_se["Forward P/E"] = df_se["Ticker"].apply(lambda t: funds.get(t, {}).get("Forward P/E", "N/A"))
@@ -163,31 +198,48 @@ with tab2:
 
 # --- AI-RAPPORT ---
 st.markdown("---")
-st.header("🤖 AI-marknadsanalys")
+st.header("🤖 AI-marknadsanalys & Makroperspektiv")
 
 if st.button("Generera AI-analys", type="primary"):
     if not api_key or not api_key.strip():
         st.error("Mata in din Gemini API-nyckel i sidomenyn till vänster.")
     else:
-        with st.spinner("AI-analytikern sammanställer rapporten..."):
+        with st.spinner("AI-analytikern utvärderar makro, tekniska signaler och fundamenta..."):
             try:
                 genai.configure(api_key=api_key.strip())
                 model = genai.GenerativeModel("gemini-3.6-flash")
                 
                 prompt = f"""
-                Du är en erfaren teknisk och makro-analytiker för den svenska och amerikanska marknaden. Analysera följande data:
+                Du är en erfaren chefsanalytiker och makrostrateg på en ledande investeringsbank.
+                Gör en djupgående marknads- och nyhetsanalys utifrån följande data:
 
-                US SEKTORER (Jämfört mot SPY):
+                MAKROINDIKATORER JUST NU:
+                {macro_info}
+
+                AMERIKANSKA SEKTORER (Jämfört mot SPY):
                 {df_us.to_string() if 'df_us' in locals() and not df_us.empty else 'Ingen data'}
 
-                SVENSKA AKTIER OCH SIGNALER (Jämfört mot OMXS30):
+                SVENSKA AKTIER, SIGNALER OCH FUNDAMENTA (Jämfört mot OMXS30):
                 {df_se.to_string() if 'df_se' in locals() and not df_se.empty else 'Ingen data'}
 
-                Skriv en konkret och pedagogisk rapport på SVENSKA med följande rubriker:
-                1. **Globalt & Svenskt Marknadsklimat** (Vilka sektorer leder, stämning i USA vs Sverige).
-                2. **Bästa Köplägena (🟢)** (Vilka aktier/sektorer har sund rekyl i stark upptrend).
-                3. **Överköpta & Trendbrott (🟡 / 🔴)** (Vilka bör man ta vinst i eller undvika).
-                4. **Konkret Handelsplan** (Hur man bör agera den kommande veckan).
+                Skriv en strukturerad och professionell rapport på SVENSKA med följande rubriker:
+
+                1. **🌍 Makroläge & Omvärldstrender**
+                   - Analysera hur räntor, valuta (USD/SEK), olja och guld påverkar klimatet.
+                   - Redogör för aktuellt makro- och nyhetsfokus på marknaden.
+
+                2. **💡 Vem gynnas & Vem drabbas? (Sektor & Fundamenta)**
+                   - Vilka branscher/sektorer har medvind utifrån makroläget och värderingar (P/E)?
+                   - Vilka sektorer har motvind (t.ex. hög belåning, räntekänslighet eller pressade marginaler)?
+
+                3. **🟢 Bästa Köplägena (Teknik & Fundamenta)**
+                   - Lyft fram de starkaste aktierna/sektorerna med köpsignal (🟢) och sund värdering.
+
+                4. **⚠️ Överköpta eller Riskfyllda Aktier (🟡 / 🔴)**
+                   - Vilka aktier är tekniskt överköpta eller under sin SMA200 där vinsthemtagning är klokt.
+
+                5. **🎯 Konkret Handelsplan**
+                   - Tydliga råd för hur en investerare bör positionera sig den kommande veckan.
                 """
                 
                 response = model.generate_content(prompt)
