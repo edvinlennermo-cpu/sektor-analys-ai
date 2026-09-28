@@ -22,7 +22,7 @@ if st.sidebar.button("Uppdatera marknadsdata"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Prisdata cacheas 1 timme.")
+st.sidebar.caption("Pris- och nyhetsdata cacheas i appen.")
 
 # --- WILDER'S RSI & SIGNALFUNKTIONER ---
 def compute_rsi_wilders(series, period=14):
@@ -71,6 +71,26 @@ def fetch_macro_data():
                 results[name] = "N/A"
     return results
 
+# --- HÄMTA NYHETER LIVE ---
+@st.cache_data(ttl=1800)
+def fetch_recent_news(tickers):
+    news_items = []
+    for t in tickers[:12]:  # Hämta nyheter för ett urval av nyckelaktier/sektorer
+        try:
+            tk = yf.Ticker(t)
+            news_list = tk.news
+            if news_list:
+                for item in news_list[:2]:
+                    title = item.get("title")
+                    if not title and "content" in item:
+                        title = item["content"].get("title")
+                    publisher = item.get("publisher", "Marknadsnyhet")
+                    if title:
+                        news_items.append(f"• [{t}] {title} ({publisher})")
+        except:
+            continue
+    return news_items[:12]
+
 # --- HÄMTA PRISDATA & SIGNALER ---
 @st.cache_data(ttl=3600)
 def fetch_market_data(tickers, benchmark_ticker):
@@ -93,7 +113,6 @@ def fetch_market_data(tickers, benchmark_ticker):
         sma200 = series.rolling(200).mean().iloc[-1]
         dist_sma200 = ((last_price - sma200) / sma200) * 100
 
-        # Använder Wilder's RSI (TradingView)
         rsi_series = compute_rsi_wilders(series)
         last_rsi = rsi_series.iloc[-1]
 
@@ -198,20 +217,28 @@ with tab2:
 
 # --- AI-RAPPORT ---
 st.markdown("---")
-st.header("🤖 AI-marknadsanalys & Makroperspektiv")
+st.header("🤖 AI-marknadsanalys & Nyhetsperspektiv")
 
 if st.button("Generera AI-analys", type="primary"):
     if not api_key or not api_key.strip():
         st.error("Mata in din Gemini API-nyckel i sidomenyn till vänster.")
     else:
-        with st.spinner("AI-analytikern utvärderar makro, tekniska signaler och fundamenta..."):
+        with st.spinner("AI-analytikern hämtar nyheter, analyserar makro, tekniska signaler och fundamenta..."):
             try:
                 genai.configure(api_key=api_key.strip())
                 model = genai.GenerativeModel("gemini-3.6-flash")
                 
+                # Hämtar färska nyheter för analysen
+                sample_tickers = ["VOLV-B.ST", "INVE-B.ST", "CAST.ST", "EVO.ST", "XLK", "XLE", "XLF"]
+                live_news = fetch_recent_news(sample_tickers)
+                news_text = "\n".join(live_news) if live_news else "Inga färska nyhetsrubriker hittades."
+
                 prompt = f"""
                 Du är en erfaren chefsanalytiker och makrostrateg på en ledande investeringsbank.
                 Gör en djupgående marknads- och nyhetsanalys utifrån följande data:
+
+                SENASTE NYHETSRUBRIKER & HÄNDELSER:
+                {news_text}
 
                 MAKROINDIKATORER JUST NU:
                 {macro_info}
@@ -224,21 +251,24 @@ if st.button("Generera AI-analys", type="primary"):
 
                 Skriv en strukturerad och professionell rapport på SVENSKA med följande rubriker:
 
-                1. **🌍 Makroläge & Omvärldstrender**
+                1. **📰 Nyhetsläget & Viktiga Katalysatorer**
+                   - Sammanfatta de viktigaste nyhetsrubrikerna och marknadshändelserna just nu.
+                   - Förklara hur nyhetsflödet påverkar investerarnas humör.
+
+                2. **🌍 Makroläge & Omvärldstrender**
                    - Analysera hur räntor, valuta (USD/SEK), olja och guld påverkar klimatet.
-                   - Redogör för aktuellt makro- och nyhetsfokus på marknaden.
 
-                2. **💡 Vem gynnas & Vem drabbas? (Sektor & Fundamenta)**
-                   - Vilka branscher/sektorer har medvind utifrån makroläget och värderingar (P/E)?
-                   - Vilka sektorer har motvind (t.ex. hög belåning, räntekänslighet eller pressade marginaler)?
+                3. **💡 Vem gynnas & Vem drabbas? (Sektor & Fundamenta)**
+                   - Vilka branscher har medvind utifrån nyheter, makro och värderingar (P/E)?
+                   - Vilka sektorer har motvind?
 
-                3. **🟢 Bästa Köplägena (Teknik & Fundamenta)**
-                   - Lyft fram de starkaste aktierna/sektorerna med köpsignal (🟢) och sund värdering.
+                4. **🟢 Bästa Köplägena (Teknik, Nyheter & Fundamenta)**
+                   - Lyft fram de starkaste aktierna/sektorerna med köpsignal (🟢).
 
-                4. **⚠️ Överköpta eller Riskfyllda Aktier (🟡 / 🔴)**
+                5. **⚠️ Överköpta eller Riskfyllda Aktier (🟡 / 🔴)**
                    - Vilka aktier är tekniskt överköpta eller under sin SMA200 där vinsthemtagning är klokt.
 
-                5. **🎯 Konkret Handelsplan**
+                6. **🎯 Konkret Handelsplan**
                    - Tydliga råd för hur en investerare bör positionera sig den kommande veckan.
                 """
                 
