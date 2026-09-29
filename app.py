@@ -226,7 +226,7 @@ if st.button("Generera AI-analys", type="primary"):
         with st.spinner("AI-analytikern hämtar nyheter, analyserar makro, tekniska signaler och fundamenta..."):
             try:
                 genai.configure(api_key=api_key.strip())
-                model = genai.GenerativeModel("gemini-3.6-flash")
+                model = genai.GenerativeModel("gemini-2.5-flash")
                 
                 # Hämtar färska nyheter för analysen
                 sample_tickers = ["VOLV-B.ST", "INVE-B.ST", "CAST.ST", "EVO.ST", "XLK", "XLE", "XLF"]
